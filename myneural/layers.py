@@ -15,10 +15,6 @@ class Linear(mn.Module):
         if self.bias is not None:
             x = x + self.bias # (B, T, C_out) + (T_broadcasted, C_out)
         return x
-    
-    def split(self, split_size, dim=0):
-        """currently only for non bias version"""
-        return self.weight.split(split_size, dim)
 
 class Embedding(mn.Module):
     
@@ -55,22 +51,31 @@ class LayerNorm(mn.Module):
 class MultiHeadAttention(mn.Module):
     def __init__(self, config, dtype = torch.float32, device = 'cpu'):
         super().__init__()
-        kwargs = {'dtype': dtype, 'device': device}
+        self.kwargs = {'dtype': dtype, 'device': device}
         assert config.n_embd % config.n_head == 0, "n_embd needs to be an integer multiple of n_heads."
         self.n_embd = config.n_embd
         self.n_head = config.n_head
-        self.qkv = Linear(config.n_embd, config.n_embd * 3, **kwargs) # q, k, v in a single matrix (C, 3*C)
-        head_size = config.n_embd // config.n_head
-        self.tril = torch.tril(torch.ones(config.context_length, config.context_length, **kwargs)).view(1,1,config.context_length, config.context_length) # so that later i can use this as (B_b, nh_b, T, T)
-        # as this mask is applied to attention scores, which are a result of (B, nh, T, hs) @ (B, nh, hs, T) => (B, nh, T, T) 
+        self.qkv = Linear(config.n_embd, config.n_embd * 3, **self.kwargs) # q, k, v in a single matrix (C, 3*C)
+        self.tril = self.register_buffer('tril', torch.tril(torch.ones(config.context_length, config.context_length, **self.kwargs)).view(1,1,config.context_length, config.context_length))
+        # so that later i can use this as (B_b, nh_b, T, T)
+        # as this mask is applied to attention scores, (B, nh, T, T) 
+        self.out_proj = Linear(config.n_embd, config.n_embd, **self.kwargs)
+        
 
     def forward(self, x):
-        B,T,C = x.shape
-        q,k,v = self.qkv.split(self.n_embd, dim=-1) # split back along the (n_embd*3) dimension. each are ()
-        head_size = self.n_embd // self.n_head # can use either self.n_embd or C here.
-        q = q.view(1, 1, self.n_head, self.n_embd // self.n_head).transpose(1,2) # view (C,) as (B,T,nh,hs) => (B,nh,T,hs) where this B and T = 1 
-        attention = (q @ k.T) * self.n_head**-0.5 # (B, nh, T, hs) @ (B, nh, hs, T) => (B, nh, T, T) 
-        #TODO: finish attention
         
-        
+        B,T,C = x.shape # C == n_embd
+        qkv = self.qkv(x) # gives (B, T, C) @ (C, C*3) => (B, T, C*3)
+        q,k,v = torch.split(qkv, self.n_embd, dim=-1) # split back along the (C*3) to get (B,T,C)
+        head_size = self.n_embd // self.n_head # head_size * n_head = n_embd
+        q = q.view(B, T, self.n_head, head_size).transpose(1,2) # view (B,T,C) as (B,T,nh,hs) => (B,nh,T,hs) where nh*hs = C 
+        k = k.view(B, T, self.n_head, head_size).transpose(1,2) # (B,nh,T,hs) 
+        v = v.view(B, T, self.n_head, head_size).transpose(1,2) # (B,nh,T,hs) 
+        attention = (q @ k.transpose(-2, -1)) * head_size**-0.5 # (B, nh, T, hs) @ (B, nh, hs, T) => (B, nh, T, T) 
+        attention = attention.masked_fill(self.tril[:, :, :T, :T] == 0, float('-inf')) # the == 0 creates a boolean mask of (1, 1, T, T)
+        attention = torch.softmax(attention, dim = -1) # we want each row in (T,T) to sum to 1 as it acts like probabilities of how useful other tokens are for each token
+        attention = attention @ v # (B, nh, T, T) @ (B, nh, T, hs) => (B, nh, T, hs) each token focuses on highly aligned other tokens to weigh in their embeddings
+        attention = attention.transpose(1,2).contiguous().view(B, T, C) # (B, nh, T, hs) => (B, T, nh, hs), make them contiguous so we can view them as (B, T, C)
+        x = self.out_proj(attention) # (B, T, C) @ (C, C) => (B, T, C)
+        return x
         

@@ -1,11 +1,13 @@
+from typing import Any
 import torch
 from abc import abstractmethod, ABC
 from dataclasses import dataclass
 
 @dataclass
 class MyConfig:
-    n_embd = 768,
+    n_embd = 768
     n_head = 4
+    context_length = 256
 
 
 class Module(ABC):
@@ -14,24 +16,65 @@ class Module(ABC):
     def forward(self, x):
         pass    
     
+    def __init__(self) -> None:
+        super().__init__()
+        self.buffers = dict()
+    
     def parameters(self):
         params = []
         for attribute in self.__dict__.values():
             def try_append_attribute(attr):    
-                if isinstance(attr, torch.Tensor) and attr.requires_grad:
+                if isinstance(attr, torch.Tensor):
                     params.append(attr)
                         
                 if isinstance(attr, Module):
                     params.extend(attr.parameters())
+                    
+                if isinstance(attr, list):
+                    for item in attr:
+                        try_append_attribute(item)
             try_append_attribute(attribute)
-            if isinstance(attribute, list):
-                for item in attribute:
-                    try_append_attribute(item)
                     
         return params
+    
+    def register_buffer(self, key, buffer: torch.Tensor):
+        '''make sure to name key as the variable you are setting it to.'''
+        self.buffers[key] = buffer
+        return buffer
+    
+    def to(self, device, dtype):
+        for key in self.__dict__.keys():
+            attribute = getattr(self, key)
+        
+            if isinstance(attribute, torch.Tensor):
+                setattr(self, key,attribute.to(device=device, dtype=dtype))
+            if isinstance(attribute, Module):
+                setattr(self, key,attribute.to(device, dtype))
+            if isinstance(attribute, list):
+                def list_to(list):
+                    for i, item in enumerate(list):
+                        if isinstance(item, torch.Tensor):
+                            list[i] = item.to(device=device, dtype=dtype)
+                        if isinstance(item, Module):
+                            list[i] = item.to(device, dtype)
+                        if isinstance(item, list):
+                            list_to(item)
+                list_to(attribute)
+                
+        for key in self.buffers.keys():
+            new_buffer = self.buffers[key].to(device=device, dtype=dtype)
+            self.buffers[key] = new_buffer 
+            if hasattr(self, key):
+                setattr(self, key, new_buffer)
+        return self
+        
+            
+    def __call__(self, x)->Any:
+        return self.forward(x)
+    
     
 class Param(torch.Tensor):
     
     def __new__(cls, data, **kwargs):
-        return torch.Tensor.as_subclass(data, cls).requires_grad_(True)
+        return torch.Tensor.as_subclass(data, cls, **kwargs).requires_grad_(True)
         
