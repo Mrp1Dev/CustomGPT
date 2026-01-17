@@ -1,0 +1,7 @@
+# Ignore the entire data folder
+data/
+
+# Ignore the params.pth file in the root directory
+/params.pth
+
+__pycache__/

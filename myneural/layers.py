@@ -21,7 +21,7 @@ class Embedding(mn.Module):
     def __init__(self, n_in, n_out, dtype = torch.float32, device = 'cpu'):
         super().__init__()
         kwargs = {'dtype': dtype, 'device': device}
-        self.embedding = P(torch.randn(n_in, n_out, **kwargs)) 
+        self.embedding = P(torch.randn(n_in, n_out, **kwargs) * n_out**-0.5) 
         
     def forward(self, x):
         return self.embedding[x] # (vocab_size, n_embd) indexed with (B, T) gives (B, T, n_embd) where values of x at [B, T] are within [0, vocab_size)
@@ -49,7 +49,7 @@ class LayerNorm(mn.Module):
         return x
         
 class MultiHeadAttention(mn.Module):
-    def __init__(self, config, dtype = torch.float32, device = 'cpu'):
+    def __init__(self, config: mn.Config, dtype = torch.float32, device = 'cpu'):
         super().__init__()
         self.kwargs = {'dtype': dtype, 'device': device}
         assert config.n_embd % config.n_head == 0, "n_embd needs to be an integer multiple of n_heads."
@@ -79,3 +79,26 @@ class MultiHeadAttention(mn.Module):
         x = self.out_proj(attention) # (B, T, C) @ (C, C) => (B, T, C)
         return x
         
+class Sequential(mn.Module):
+    def __init__(self, layers: list) -> None:
+        super().__init__()
+        self.layers = layers
+    
+    def forward(self, x):
+        for layer in self.layers:
+            x = layer(x)
+        return x
+        
+class FeedForward(mn.Module):
+    def __init__(self, config: mn.Config, dtype = torch.float32, device = 'cpu'):
+        super().__init__()
+        self.kwargs = {'dtype': dtype, 'device': device}
+        self.mlp = Sequential([
+            Linear(config.n_embd, config.n_embd * 4, **self.kwargs),
+            SiLU(),
+            Linear(config.n_embd*4, config.n_embd, **self.kwargs)
+        ])
+    
+    def forward(self, x):
+        x = self.mlp(x)
+        return x
