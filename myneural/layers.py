@@ -47,6 +47,26 @@ class LayerNorm(mn.Module):
         x = (x - mean) * (var + self.eps)**-0.5 # ((B, T, C) - (B, T, C_b)) * (B, T, C_b) 
         x = self.gamma * x + self.beta # (B_b, T_b, C) * (B, T, C) + (B_b, T_b, C)
         return x
+       
+class RMSNorm(mn.Module):
+    
+    def __init__(self, n_in, eps = 1e-8,dtype = torch.float32, device = 'cpu'):
+        super().__init__()
+        kwargs = {'dtype': dtype, 'device': device}
+        self.eps = eps
+        self.gamma = P(torch.ones(n_in, **kwargs)) # (n_embd, )
+        # no beta!
+    
+    def forward(self, x: torch.Tensor):
+        
+        # RMS: square, then mean, then root. eg. sqrt((x2 + y2 + z2)/3)
+        x_fp32 = x.float() # we cast to fp32 so that when we square and mean etc we have higher accuracy in such large values
+        square = x_fp32.pow(2) # (B, T, C) all values of all tokens in all batches squared
+        mean = square.mean(dim=-1, keepdim=True) # (B, T, 1) all embeddings for each token of each batch are mean'd. 
+        # we keepdim so that when i divide later we don't have the issue of (B, T, C) / (B, T) [would get C vs T not equal issue]
+        root_reciprocal = torch.rsqrt(mean + self.eps) # r_sqrt is just faster for reciprocals
+        
+        return self.gamma * (x_fp32 * root_reciprocal).type_as(x) # gamma*(x/rms(x)), type is casted back to normal (bf16 probably)      
         
 class MultiHeadAttention(mn.Module):
     def __init__(self, config: mn.Config, dtype = torch.float32, device = 'cpu'):
@@ -71,12 +91,13 @@ class MultiHeadAttention(mn.Module):
         q = q.view(B, T, self.n_head, head_size).transpose(1,2) # view (B,T,C) as (B,T,nh,hs) => (B,nh,T,hs) where nh*hs = C 
         k = k.view(B, T, self.n_head, head_size).transpose(1,2) # (B,nh,T,hs) 
         v = v.view(B, T, self.n_head, head_size).transpose(1,2) # (B,nh,T,hs) 
-        attention = (q @ k.transpose(-2, -1)) * head_size**-0.5 # (B, nh, T, hs) @ (B, nh, hs, T) => (B, nh, T, T) 
-        attention = attention.masked_fill(self.tril[:, :, :T, :T] == 0, float('-inf')) # the == 0 creates a boolean mask of (1, 1, T, T)
-        attention = torch.softmax(attention, dim = -1) # we want each row in (T,T) to sum to 1 as it acts like probabilities of how useful other tokens are for each token
-        attention = attention @ v # (B, nh, T, T) @ (B, nh, T, hs) => (B, nh, T, hs) each token focuses on highly aligned other tokens to weigh in their embeddings
-        attention = attention.transpose(1,2).contiguous().view(B, T, C) # (B, nh, T, hs) => (B, T, nh, hs), make them contiguous so we can view them as (B, T, C)
-        x = self.out_proj(attention) # (B, T, C) @ (C, C) => (B, T, C)
+        # attention = (q @ k.transpose(-2, -1)) * head_size**-0.5 # (B, nh, T, hs) @ (B, nh, hs, T) => (B, nh, T, T) 
+        # attention = attention.masked_fill(self.tril[:, :, :T, :T] == 0, float('-inf')) # the == 0 creates a boolean mask of (1, 1, T, T)
+        # attention = torch.softmax(attention, dim = -1) # we want each row in (T,T) to sum to 1 as it acts like probabilities of how useful other tokens are for each token
+        # result = attention @ v # (B, nh, T, T) @ (B, nh, T, hs) => (B, nh, T, hs) each token focuses on highly aligned other tokens to weigh in their embeddings
+        result = torch.nn.functional.scaled_dot_product_attention(q, k, v, self.tril)
+        result = result.transpose(1,2).contiguous().view(B, T, C) # (B, nh, T, hs) => (B, T, nh, hs), make them contiguous so we can view them as (B, T, C)
+        result = self.out_proj(result) # (B, T, C) @ (C, C) => (B, T, C)
         return x
         
 class Sequential(mn.Module):
