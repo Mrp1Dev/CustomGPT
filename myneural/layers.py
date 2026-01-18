@@ -56,7 +56,7 @@ class MultiHeadAttention(mn.Module):
         self.n_embd = config.n_embd
         self.n_head = config.n_head
         self.qkv = Linear(config.n_embd, config.n_embd * 3, **self.kwargs) # q, k, v in a single matrix (C, 3*C)
-        self.tril = self.register_buffer('tril', torch.tril(torch.ones(config.context_length, config.context_length, **self.kwargs)).view(1,1,config.context_length, config.context_length))
+        self.tril = torch.tril(torch.ones(config.context_length, config.context_length, **self.kwargs)).view(1,1,config.context_length, config.context_length)
         # so that later i can use this as (B_b, nh_b, T, T)
         # as this mask is applied to attention scores, (B, nh, T, T) 
         self.out_proj = Linear(config.n_embd, config.n_embd, **self.kwargs)

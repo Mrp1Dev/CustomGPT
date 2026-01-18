@@ -27,7 +27,7 @@ class Module(ABC):
         params = []
         for attribute in self.__dict__.values():
             def try_append_attribute(attr):    
-                if isinstance(attr, Param):
+                if isinstance(attr, torch.Tensor) and attr.requires_grad:
                     params.append(attr)
                         
                 if isinstance(attr, Module):
@@ -40,46 +40,55 @@ class Module(ABC):
                     
         return params
     
-    def register_buffer(self, key, buffer: torch.Tensor):
-        '''make sure to name key as the variable you are setting it to.'''
-        self.buffers[key] = buffer
-        return buffer
+    # def register_buffer(self, key, buffer: torch.Tensor):
+    #     '''make sure to name key as the variable you are setting it to.'''
+    #     self.buffers[key] = buffer
+    #     return buffer
     
     def to(self, device, dtype):
         for key in self.__dict__.keys():
             attribute = getattr(self, key)
         
-            if isinstance(attribute, Param):
-                setattr(self, key,Param(attribute.to(device=device, dtype=dtype)))
+            if isinstance(attribute, torch.Tensor):
+                was_param = attribute.requires_grad
+                moved = attribute.to(device=device, dtype=dtype)
+                if was_param:
+                    moved = Param(moved)
+                setattr(self, key, moved)
             if isinstance(attribute, Module):
                 setattr(self, key,attribute.to(device, dtype))
             if isinstance(attribute, list):
                 def list_to(list):
                     for i, item in enumerate(list):
-                        if isinstance(item, Param):
-                            list[i] = Param(item.to(device=device, dtype=dtype))
+                        if isinstance(item, torch.Tensor):
+                            was_param = attribute.requires_grad
+                            moved = attribute.to(device=device, dtype=dtype)
+                            if was_param:
+                                moved = Param(moved)
+                            list[i] = moved
                         if isinstance(item, Module):
                             list[i] = item.to(device, dtype)
                         if isinstance(item, list):
                             list_to(item)
                 list_to(attribute)
-                
-        for key in self.buffers.keys():
-            new_buffer = self.buffers[key].to(device=device, dtype=dtype)
-            self.buffers[key] = new_buffer 
-            if hasattr(self, key):
-                setattr(self, key, new_buffer)
-        return self
+        # BUFFERS are no longer REQUIRED as all torch.tensors get moved.
+        # for key in self.buffers.keys():
+        #     new_buffer = self.buffers[key].to(device=device, dtype=dtype)
+        #     self.buffers[key] = new_buffer 
+        #     if hasattr(self, key):
+        #         setattr(self, key, new_buffer)
+        # return self
         
             
     def __call__(self, x, **kwargs)->Any:
         return self.forward(x, **kwargs)
     
     
-class Param(torch.Tensor):
+# class Param(torch.Tensor):
     
-    def __new__(cls, data, **kwargs):
-        if isinstance(data, torch.Tensor):
-            data = data.detach()
-        return torch.Tensor.as_subclass(data, cls, **kwargs).requires_grad_(True)
-        
+#     def __new__(cls, data, **kwargs):
+#         if isinstance(data, torch.Tensor):
+#             data = data.detach()
+#         return torch.Tensor.as_subclass(data, cls, **kwargs).requires_grad_(True)
+def Param(tensor):
+    return tensor.requires_grad_(True)
