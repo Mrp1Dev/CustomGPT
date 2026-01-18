@@ -1,14 +1,13 @@
 import torch
-import myneural as mn
-from myneural.module import Param as P
-
-class Linear(mn.Module):
+import torch.nn as nn
+from .model import Config
+class Linear(nn.Module):
     
     def __init__(self, n_in, n_out, dtype = torch.float32, device = 'cpu', bias = False):
         super().__init__()
         kwargs = {'dtype': dtype, 'device': device}
-        self.weight = P(torch.randn(n_in, n_out, **kwargs) * (n_in ** -0.5)) # scaling down with * 1/sqrt(fan_in). gain isn't really required due to normalization layers.
-        self.bias = P(torch.zeros(n_out, **kwargs)) if bias else None
+        self.weight = nn.Parameter(torch.randn(n_in, n_out, **kwargs) * (n_in ** -0.5)) # scaling down with * 1/sqrt(fan_in). gain isn't really required due to normalization layers.
+        self.bias = nn.Parameter(torch.zeros(n_out, **kwargs)) if bias else None
         
     def forward(self, x):
         x = x @ self.weight # (B, T, C_in) @ (C_in, C_out) => (B, T, C_out)
@@ -16,29 +15,29 @@ class Linear(mn.Module):
             x = x + self.bias # (B, T, C_out) + (T_broadcasted, C_out)
         return x
 
-class Embedding(mn.Module):
+class Embedding(nn.Module):
     
     def __init__(self, n_in, n_out, dtype = torch.float32, device = 'cpu'):
         super().__init__()
         kwargs = {'dtype': dtype, 'device': device}
-        self.embedding = P(torch.randn(n_in, n_out, **kwargs) * n_out**-0.5) 
+        self.embedding = nn.Parameter(torch.randn(n_in, n_out, **kwargs) * n_out**-0.5)
         
     def forward(self, x):
         return self.embedding[x] # (vocab_size, n_embd) indexed with (B, T) gives (B, T, n_embd) where values of x at [B, T] are within [0, vocab_size)
     
-class SiLU(mn.Module):
+class SiLU(nn.Module):
     def forward(self, x):
         return x * torch.sigmoid(x) # modern replacement for reLU (precursor to swiGLU, might add that later. idk for small models though)
     
     
-class LayerNorm(mn.Module):
+class LayerNorm(nn.Module):
     
     def __init__(self, n_in, eps = 1e-8,dtype = torch.float32, device = 'cpu'):
         super().__init__()
         kwargs = {'dtype': dtype, 'device': device}
         self.eps = eps
-        self.gamma = P(torch.ones(n_in, **kwargs)) # (n_embd, )
-        self.beta = P(torch.zeros(n_in, **kwargs)) # (n_embd, ) but will be broadcasted to (n_embd_b, n_embd) during addition
+        self.gamma = nn.Parameter(torch.ones(n_in, **kwargs)) # (n_embd, )
+        self.beta = nn.Parameter(torch.zeros(n_in, **kwargs)) # (n_embd, ) but will be broadcasted to (n_embd_b, n_embd) during addition
     
     def forward(self, x):
         
@@ -48,15 +47,15 @@ class LayerNorm(mn.Module):
         x = self.gamma * x + self.beta # (B_b, T_b, C) * (B, T, C) + (B_b, T_b, C)
         return x
         
-class MultiHeadAttention(mn.Module):
-    def __init__(self, config: mn.Config, dtype = torch.float32, device = 'cpu'):
+class MultiHeadAttention(nn.Module):
+    def __init__(self, config: Config, dtype = torch.float32, device = 'cpu'):
         super().__init__()
         self.kwargs = {'dtype': dtype, 'device': device}
         assert config.n_embd % config.n_head == 0, "n_embd needs to be an integer multiple of n_heads."
         self.n_embd = config.n_embd
         self.n_head = config.n_head
         self.qkv = Linear(config.n_embd, config.n_embd * 3, **self.kwargs) # q, k, v in a single matrix (C, 3*C)
-        self.tril = self.register_buffer('tril', torch.tril(torch.ones(config.context_length, config.context_length, **self.kwargs)).view(1,1,config.context_length, config.context_length))
+        self.register_buffer('tril', torch.tril(torch.ones(config.context_length, config.context_length, **self.kwargs)).view(1,1,config.context_length, config.context_length))
         # so that later i can use this as (B_b, nh_b, T, T)
         # as this mask is applied to attention scores, (B, nh, T, T) 
         self.out_proj = Linear(config.n_embd, config.n_embd, **self.kwargs)
@@ -79,7 +78,7 @@ class MultiHeadAttention(mn.Module):
         x = self.out_proj(attention) # (B, T, C) @ (C, C) => (B, T, C)
         return x
         
-class Sequential(mn.Module):
+class Sequential(nn.Module):
     def __init__(self, layers: list) -> None:
         super().__init__()
         self.layers = layers
@@ -89,8 +88,8 @@ class Sequential(mn.Module):
             x = layer(x)
         return x
         
-class FeedForward(mn.Module):
-    def __init__(self, config: mn.Config, dtype = torch.float32, device = 'cpu'):
+class FeedForward(nn.Module):
+    def __init__(self, config: Config, dtype = torch.float32, device = 'cpu'):
         super().__init__()
         self.kwargs = {'dtype': dtype, 'device': device}
         self.mlp = Sequential([

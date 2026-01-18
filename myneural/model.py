@@ -1,8 +1,21 @@
 import torch
+import torch.nn as nn
 import myneural as mn
+from dataclasses import dataclass
 
-class Block(mn.Module):
-    def __init__(self, config: mn.Config, dtype = torch.float32, device = 'cpu'):
+@dataclass
+class Config:
+    n_embd = 192
+    n_head = 6
+    context_length = 256
+    vocab_size = 65
+    n_layer = 6
+    batch_size = 64
+    device = 'cuda'
+
+
+class Block(nn.Module):
+    def __init__(self, config: Config, dtype = torch.float32, device = 'cpu'):
         super().__init__()
         self.attention = mn.MultiHeadAttention(config, dtype, device)
         self.feed_forward = mn.FeedForward(config, dtype, device)
@@ -14,8 +27,8 @@ class Block(mn.Module):
         x = x + self.feed_forward(self.ln2(x))
         return x
 
-class Transformer(mn.Module):
-    def __init__(self, config: mn.Config, dtype = torch.float32, device = 'cpu'):
+class Transformer(nn.Module):
+    def __init__(self, config: Config, dtype = torch.float32, device = 'cpu'):
         super().__init__()
         self.config = config
         self.token_embedding = mn.Embedding(config.vocab_size, config.n_embd, dtype, device)
