@@ -6,10 +6,11 @@ from dataclasses import dataclass
 class Config:
     n_embd = 192
     n_head = 6
-    context_length = 256
     vocab_size = 65
     n_layer = 6
-    batch_size = 64
+    total_batch_size = 65536 # MUST BE DIVISBLE by (B*T)
+    mini_batch_size = 64 # B
+    context_length = 256 # T
     device = 'cuda'
 
 
@@ -22,20 +23,21 @@ class Module(ABC):
     def __init__(self) -> None:
         super().__init__()
         self.buffers = dict()
+        self.is_train = True
     
     def parameters(self):
         params = []
-        for attribute in self.__dict__.values():
-            def try_append_attribute(attr):    
-                if isinstance(attr, torch.Tensor) and attr.requires_grad:
-                    params.append(attr)
-                        
-                if isinstance(attr, Module):
-                    params.extend(attr.parameters())
+        def try_append_attribute(attr):    
+            if isinstance(attr, torch.Tensor) and attr.requires_grad:
+                params.append(attr)
                     
-                if isinstance(attr, list):
-                    for item in attr:
-                        try_append_attribute(item)
+            if isinstance(attr, Module):
+                params.extend(attr.parameters())
+                
+            if isinstance(attr, list):
+                for item in attr:
+                    try_append_attribute(item)
+        for attribute in self.__dict__.values():
             try_append_attribute(attribute)
                     
         return params
@@ -46,6 +48,18 @@ class Module(ABC):
     #     return buffer
     
     def to(self, device, dtype):
+        def list_to(list):
+            for i, item in enumerate(list):
+                if isinstance(item, torch.Tensor):
+                    was_param = attribute.requires_grad
+                    moved = attribute.to(device=device, dtype=dtype)
+                    if was_param:
+                        moved = Param(moved)
+                    list[i] = moved
+                if isinstance(item, Module):
+                    list[i] = item.to(device, dtype)
+                if isinstance(item, list):
+                    list_to(item)
         for key in self.__dict__.keys():
             attribute = getattr(self, key)
         
@@ -58,18 +72,6 @@ class Module(ABC):
             if isinstance(attribute, Module):
                 setattr(self, key,attribute.to(device, dtype))
             if isinstance(attribute, list):
-                def list_to(list):
-                    for i, item in enumerate(list):
-                        if isinstance(item, torch.Tensor):
-                            was_param = attribute.requires_grad
-                            moved = attribute.to(device=device, dtype=dtype)
-                            if was_param:
-                                moved = Param(moved)
-                            list[i] = moved
-                        if isinstance(item, Module):
-                            list[i] = item.to(device, dtype)
-                        if isinstance(item, list):
-                            list_to(item)
                 list_to(attribute)
         # BUFFERS are no longer REQUIRED as all torch.tensors get moved.
         # for key in self.buffers.keys():
@@ -77,11 +79,29 @@ class Module(ABC):
         #     self.buffers[key] = new_buffer 
         #     if hasattr(self, key):
         #         setattr(self, key, new_buffer)
-        # return self
+        return self
         
-            
     def __call__(self, x, **kwargs)->Any:
         return self.forward(x, **kwargs)
+    
+    def train(self):
+        self._set_train_(True)
+        return self
+    def eval(self):
+        self._set_train_(False)
+        return self
+        
+    def _set_train_(self, new_train):
+        self.is_train = new_train
+        def recursive_set_train(attr):                
+            if isinstance(attr, Module):
+                attr._set_train_(new_train)
+            if isinstance(attr, list):
+                for item in attr:
+                    recursive_set_train(item)
+        for key in self.__dict__.keys():
+            attribute = getattr(self, key)
+            recursive_set_train(attribute)
     
     
 # class Param(torch.Tensor):

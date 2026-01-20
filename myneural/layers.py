@@ -60,7 +60,7 @@ class RMSNorm(mn.Module):
     def forward(self, x: torch.Tensor):
         
         # RMS: square, then mean, then root. eg. sqrt((x2 + y2 + z2)/3)
-        x_fp32 = x.float() # we cast to fp32 so that when we square and mean etc we have higher accuracy in such large values
+        x_fp32 = x.float() # we cast to fp32 so when I square and add during mean etc we have higher accuracy in such large values
         square = x_fp32.pow(2) # (B, T, C) all values of all tokens in all batches squared
         mean = square.mean(dim=-1, keepdim=True) # (B, T, 1) all embeddings for each token of each batch are mean'd. 
         # we keepdim so that when i divide later we don't have the issue of (B, T, C) / (B, T) [would get C vs T not equal issue]
@@ -95,10 +95,10 @@ class MultiHeadAttention(mn.Module):
         # attention = attention.masked_fill(self.tril[:, :, :T, :T] == 0, float('-inf')) # the == 0 creates a boolean mask of (1, 1, T, T)
         # attention = torch.softmax(attention, dim = -1) # we want each row in (T,T) to sum to 1 as it acts like probabilities of how useful other tokens are for each token
         # result = attention @ v # (B, nh, T, T) @ (B, nh, T, hs) => (B, nh, T, hs) each token focuses on highly aligned other tokens to weigh in their embeddings
-        result = torch.nn.functional.scaled_dot_product_attention(q, k, v, self.tril)
+        result = torch.nn.functional.scaled_dot_product_attention(q, k, v, is_causal=True)
         result = result.transpose(1,2).contiguous().view(B, T, C) # (B, nh, T, hs) => (B, T, nh, hs), make them contiguous so we can view them as (B, T, C)
         result = self.out_proj(result) # (B, T, C) @ (C, C) => (B, T, C)
-        return x
+        return result
         
 class Sequential(mn.Module):
     def __init__(self, layers: list) -> None:

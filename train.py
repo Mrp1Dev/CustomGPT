@@ -6,7 +6,7 @@ config.n_embd = 192
 config.context_length = 256
 config.n_head = 6
 config.n_layer = 6
-config.batch_size = 64
+config.mini_batch_size = 64
 config.device = 'cuda'
 
 
@@ -31,7 +31,7 @@ val = data[n:]
 
 def get_batch(split):
     x = train if split == 'train' else val
-    ix = torch.randint(0, len(x) - config.context_length, (config.batch_size,))
+    ix = torch.randint(0, len(x) - config.context_length, (config.mini_batch_size,))
     xs = [x[i:i+config.context_length] for i in ix] # (B, T)
     ys = [x[i+1:i+config.context_length+1] for i in ix] # (B, T)
     return xs, ys
