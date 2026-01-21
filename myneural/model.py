@@ -5,7 +5,7 @@ class Block(mn.Module):
     def __init__(self, config: mn.Config, dtype = torch.float32, device = 'cpu'):
         super().__init__()
         self.attention = mn.MultiHeadAttention(config, dtype, device)
-        self.feed_forward = mn.FeedForward(config, dtype, device)
+        self.feed_forward = mn.SwiGLU(config, dtype, device) # i've updated from linear MLP to SwiGLU, but its still considered an ffwd layer.
         self.rmsn_1 = mn.RMSNorm(config.n_embd, 1e-8, dtype, device)
         self.rmsn_2 = mn.RMSNorm(config.n_embd, 1e-8, dtype, device)
         

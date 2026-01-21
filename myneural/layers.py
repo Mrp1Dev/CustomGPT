@@ -7,7 +7,7 @@ class Linear(mn.Module):
     def __init__(self, n_in, n_out, dtype = torch.float32, device = 'cpu', bias = False):
         super().__init__()
         kwargs = {'dtype': dtype, 'device': device}
-        self.weight = P(torch.randn(n_in, n_out, **kwargs) * (n_in ** -0.5)) # scaling down with * 1/sqrt(fan_in). gain isn't really required due to normalization layers.
+        self.weight: torch.Tensor = P(torch.randn(n_in, n_out, **kwargs) * (n_in ** -0.5)) # scaling down with * 1/sqrt(fan_in). gain isn't really required due to normalization layers.
         self.bias = P(torch.zeros(n_out, **kwargs)) if bias else None
         
     def forward(self, x):
@@ -123,3 +123,25 @@ class FeedForward(mn.Module):
     def forward(self, x):
         x = self.mlp(x)
         return x
+    
+class SwiGLU(mn.Module):
+        def __init__(self, config: mn.Config, dtype = torch.float32, device = 'cpu'):
+            super().__init__()
+            self.kwargs = {'dtype': dtype, 'device': device}
+            # to be equivalent to C*4 from ffwd, we require 8/3*C as now there's 3 layers rather than 2, keeping params same.
+            n_hidden = nearest_multiple(int(8 * config.n_embd / 3), divisor=256) # closest multiple of 256 to 8/3*C to make it a 'nice-number' 
+            # (multiple works fine, Pow of 2 would require too big of a difference in size for not much in effeciency.)
+            self.gate_value_proj = Linear(config.n_embd, n_hidden * 2, **self.kwargs)
+            self.silu = SiLU()
+            self.out_proj = Linear(n_hidden, config.n_embd, **self.kwargs)
+        
+        def forward(self, x):
+            # Swiglu = Silu(wx) * (w'x) (element-wise multiplication)
+            combined = self.gate_value_proj(x) # (B, T, n_hidden*2)
+            x1, x2 = combined.chunk(chunks=2, dim=-1) # split (B, T, n_hidden * 2) along dim = -1 into 2 pieces
+            gate = self.silu(x1) # (B, T, n_hidden)
+            value = x2 # (B, T, n_hidden)
+            return self.out_proj(gate * value) # (B, T, n_hidden) @ (n_hidden, C) => (B, T, C)
+
+def nearest_multiple(x, divisor):
+    return ((x+divisor-1)//divisor) * divisor

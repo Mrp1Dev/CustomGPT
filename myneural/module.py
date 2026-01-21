@@ -110,5 +110,5 @@ class Module(ABC):
 #         if isinstance(data, torch.Tensor):
 #             data = data.detach()
 #         return torch.Tensor.as_subclass(data, cls, **kwargs).requires_grad_(True)
-def Param(tensor):
+def Param(tensor: torch.Tensor) -> torch.Tensor:
     return tensor.requires_grad_(True)
