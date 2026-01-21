@@ -52,6 +52,24 @@ class Transformer(mn.Module):
             {'params': non_decay_params, 'weight_decay': 0.0},
         ]
         return torch.optim.AdamW(optim_groups, lr=learning_rate, eps=1e-8, fused='cuda' in device)
+    
+    def configure_adamw(self, weight_decay, learning_rate, device):
+        params = self.parameters()
+        non_decay_params = [p for p in params if p.ndim < 2] # don't decay the biases or 1D vectors
+        decay_params = self.token_embedding.parameters() + self.pos_embedding.parameters()
+        optim_groups=[
+            {'params': non_decay_params, 'weight_decay': 0.0},
+            {'params': decay_params, 'weight_decay': weight_decay}
+        ]
+        return torch.optim.AdamW(optim_groups, lr=learning_rate, eps=1e-8, fused='cuda' in device)
+    
+    def configure_muon(self, weight_decay, learning_rate, device):
+        params = self.parameters()
+        embedding_params = self.token_embedding.parameters() + self.pos_embedding.parameters() # my .parameters() is not a generator, but a list.
+        embd_ids = {id(p) for p in embedding_params}
+        hidden_weights = [p for p in params if p.ndim >= 2 and id(p) not in embd_ids]
+        
+        return torch.optim.Muon(hidden_weights, lr=learning_rate, weight_decay=weight_decay, eps=1e-7, adjust_lr_fn="match_rms_adamw")
  
 @torch.no_grad()
 def generate(model, idx, max_new_tokens):
