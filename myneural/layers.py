@@ -81,8 +81,8 @@ class MultiHeadAttention(mn.Module):
         # as this mask is applied to attention scores, (B, nh, T, T) 
         self.out_proj = Linear(config.n_embd, config.n_embd, **self.kwargs)
         
-
-    def forward(self, x):
+    """cos_sin is just (cos, sin) tuple"""
+    def forward(self, x, cos_sin):
         
         B,T,C = x.shape # C == n_embd
         qkv = self.qkv(x) # gives (B, T, C) @ (C, C*3) => (B, T, C*3)
@@ -91,6 +91,10 @@ class MultiHeadAttention(mn.Module):
         q = q.view(B, T, self.n_head, head_size).transpose(1,2) # view (B,T,C) as (B,T,nh,hs) => (B,nh,T,hs) where nh*hs = C 
         k = k.view(B, T, self.n_head, head_size).transpose(1,2) # (B,nh,T,hs) 
         v = v.view(B, T, self.n_head, head_size).transpose(1,2) # (B,nh,T,hs) 
+        
+        cos, sin = cos_sin
+        q, k = mn.apply_rope(q, cos, sin), mn.apply_rope(k, cos, sin)
+        
         # attention = (q @ k.transpose(-2, -1)) * head_size**-0.5 # (B, nh, T, hs) @ (B, nh, hs, T) => (B, nh, T, T) 
         # attention = attention.masked_fill(self.tril[:, :, :T, :T] == 0, float('-inf')) # the == 0 creates a boolean mask of (1, 1, T, T)
         # attention = torch.softmax(attention, dim = -1) # we want each row in (T,T) to sum to 1 as it acts like probabilities of how useful other tokens are for each token
@@ -105,9 +109,9 @@ class Sequential(mn.Module):
         super().__init__()
         self.layers = layers
     
-    def forward(self, x):
+    def forward(self, x, **kwargs):
         for layer in self.layers:
-            x = layer(x)
+            x = layer(x, **kwargs)
         return x
         
 class FeedForward(mn.Module):

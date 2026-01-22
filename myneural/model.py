@@ -9,8 +9,8 @@ class Block(mn.Module):
         self.rmsn_1 = mn.RMSNorm(config.n_embd, 1e-8, dtype, device)
         self.rmsn_2 = mn.RMSNorm(config.n_embd, 1e-8, dtype, device)
         
-    def forward(self, x):
-        x = x + self.attention(self.rmsn_1(x))
+    def forward(self, x, cos_sin):
+        x = x + self.attention(self.rmsn_1(x), cos_sin=cos_sin)
         x = x + self.feed_forward(self.rmsn_2(x))
         return x
 
@@ -19,18 +19,20 @@ class Transformer(mn.Module):
         super().__init__()
         self.config = config
         self.token_embedding = mn.Embedding(config.vocab_size, config.n_embd, dtype, device)
-        self.pos_embedding = mn.Embedding(config.context_length, config.n_embd, dtype, device)
-        self.transformer = mn.Sequential([
+        #self.pos_embedding = mn.Embedding(config.context_length, config.n_embd, dtype, device)
+        self.blocks = mn.Sequential([
             Block(config, dtype, device) for _ in range(config.n_layer)
         ])
         self.rmsn_final = mn.RMSNorm(config.n_embd, 1e-8, dtype, device)
+        self.cos, self.sin = mn.precompute_rotary_embeddings(config.n_embd // config.n_head, config.context_length, device=config.device)
 
     def forward(self, idx, targets=None):
         B, T = idx.shape
         token_embedding = self.token_embedding(idx) # (B, T) => (B, T, C)
-        pos_embedding = self.pos_embedding(torch.arange(0, T, device = idx.device)) # (T,C)
-        x = token_embedding + pos_embedding # (B, T, C) + (B_b, T, C)
-        x = self.transformer(x)
+        # REPLACING THIS WITH ROPE
+        # pos_embedding = self.pos_embedding(torch.arange(0, T, device = idx.device)) # (T,C)
+        x = token_embedding # + pos_embedding # (B, T, C) + (B_b, T, C)
+        x = self.blocks(x, cos_sin = (self.cos[:, :, :T, :], self.sin[:, :, :T, :]))
         x = self.rmsn_final(x)
         logits = x @ self.token_embedding.embedding.T # lm_head, but directly applied (B, T, C) @ (C, vocab_size) => (B, T, vocab_size)
         if targets is not None:
@@ -42,7 +44,9 @@ class Transformer(mn.Module):
         return logits, loss
     
 
-
+    """
+    exclusively adamw for all optimization. configure_adamw and configure_muon when using them combined.
+    """
     def configure_optimizer(self, weight_decay, learning_rate, device):
         params = self.parameters()
         decay_params = [p for p in params if p.ndim >= 2]
@@ -56,7 +60,7 @@ class Transformer(mn.Module):
     def configure_adamw(self, weight_decay, learning_rate, device):
         params = self.parameters()
         non_decay_params = [p for p in params if p.ndim < 2] # don't decay the biases or 1D vectors
-        decay_params = self.token_embedding.parameters() + self.pos_embedding.parameters()
+        decay_params = self.token_embedding.parameters()
         optim_groups=[
             {'params': non_decay_params, 'weight_decay': 0.0},
             {'params': decay_params, 'weight_decay': weight_decay}
@@ -65,7 +69,7 @@ class Transformer(mn.Module):
     
     def configure_muon(self, weight_decay, learning_rate, device):
         params = self.parameters()
-        embedding_params = self.token_embedding.parameters() + self.pos_embedding.parameters() # my .parameters() is not a generator, but a list.
+        embedding_params = self.token_embedding.parameters()# my .parameters() is not a generator, but a list.
         embd_ids = {id(p) for p in embedding_params}
         hidden_weights = [p for p in params if p.ndim >= 2 and id(p) not in embd_ids]
         
