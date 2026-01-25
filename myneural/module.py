@@ -42,6 +42,49 @@ class Module(ABC):
                     
         return params
     
+    def state_dict(self, destination = None, prefix = ''):
+        
+        if destination is None:
+            destination = dict()
+        
+        def handle_item(attr, current_key):
+            if isinstance(attr, torch.Tensor) and attr.requires_grad:
+                destination[current_key] = attr.detach()
+                
+            if isinstance(attr, Module):
+                attr.state_dict(destination, current_key + '.')  
+            
+            if isinstance(attr, list):
+                for i, item in enumerate(attr):      
+                    handle_item(item, f'{current_key}.{i}')
+            
+        for name, value in self.__dict__.items():
+            handle_item(value, prefix+name)
+    
+        return destination
+    
+    def load_state_dict(self, state_dict: dict, prefix = ''):
+        
+        def handle_item(attr, current_key):
+            if isinstance(attr, torch.Tensor) and attr.requires_grad:
+                if current_key in state_dict:
+                    loaded_value = state_dict[current_key]
+                    if attr.shape != loaded_value.shape:
+                        print(f"Shape mismatch for {current_key}: expected {attr.shape}, got {loaded_value.shape}")
+                    attr.data.copy_(loaded_value)
+                else:
+                    print(f"Key {current_key} not found in state_dict")
+                
+            if isinstance(attr, Module):
+                attr.load_state_dict(state_dict, current_key + '.')  
+            
+            if isinstance(attr, list):
+                for i, item in enumerate(attr):      
+                    handle_item(item, f'{current_key}.{i}')
+            
+        for name, value in self.__dict__.items():
+            handle_item(value, prefix+name)
+    
     # def register_buffer(self, key, buffer: torch.Tensor):
     #     '''make sure to name key as the variable you are setting it to.'''
     #     self.buffers[key] = buffer
