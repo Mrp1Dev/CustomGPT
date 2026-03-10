@@ -19,7 +19,7 @@ class Transformer(mn.Module):
         super().__init__()
         self.config = config
         self.token_embedding = mn.Embedding(config.vocab_size, config.n_embd, dtype, device)
-        #self.pos_embedding = mn.Embedding(config.context_length, config.n_embd, dtype, device)
+        #self.pos_embedding = Embedding(config.context_length, config.n_embd, dtype, device)
         self.blocks = mn.Sequential([
             Block(config, dtype, device) for _ in range(config.n_layer)
         ])
@@ -38,7 +38,8 @@ class Transformer(mn.Module):
         if targets is not None:
             logits_flat = logits.view(B*T, -1)
             targets = targets.view(B*T)
-            loss = torch.nn.functional.cross_entropy(logits_flat, targets)
+            loss = torch.nn.functional.cross_entropy(logits_flat, targets, ignore_index=-100)
+            return None, loss
         else: 
             loss = torch.zeros((1))
         return logits, loss
@@ -74,24 +75,4 @@ class Transformer(mn.Module):
         hidden_weights = [p for p in params if p.ndim >= 2 and id(p) not in embd_ids]
         
         return torch.optim.Muon(hidden_weights, lr=learning_rate, weight_decay=weight_decay, eps=1e-7, adjust_lr_fn="match_rms_adamw")
- 
-@torch.no_grad()
-def generate(model, idx, max_new_tokens):
-    for i in range(max_new_tokens):
-        idx_cut = idx[:, -model.config.context_length:]
-        logits, _ = model(idx_cut) # (B, T, C)
-        logits = logits[:, -1, :] # last token, (B, C)
-        probs = torch.softmax(logits, dim = -1)
-        idx_new = torch.multinomial(probs, num_samples=1)
-        idx = torch.cat([idx, idx_new], dim=-1) 
-    return idx 
- 
-@torch.no_grad()   
-def prompt(prompt: str, model, tokenizer: sp, new_tokens = 256, debug=False, device = 'cpu'):
-    model.eval()
-    tokens = generate(model, torch.tensor([[tokenizer.eos_id()] + tokenizer.Encode(prompt)], dtype=torch.long, device=device), new_tokens) # (B, T), but B = 1
-    tokens = tokens[0].tolist() # (T,), converted from tensor to pylist
-    model.train()
-    return ''.join(tokenizer.IdToPiece(id) for id in tokens).replace('▁', ' ').replace('</s>', '</s>\n') if debug else tokenizer.Decode(tokens)
-
     

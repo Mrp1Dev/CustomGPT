@@ -69,7 +69,7 @@ class RMSNorm(mn.Module):
         return self.gamma * (x_fp32 * root_reciprocal).type_as(x) # gamma*(x/rms(x)), type is casted back to normal (bf16 probably)      
         
 class MultiHeadAttention(mn.Module):
-    def __init__(self, config: mn.Config, dtype = torch.float32, device = 'cpu'):
+    def __init__(self, config: mn.mn.Config, dtype = torch.float32, device = 'cpu'):
         super().__init__()
         self.kwargs = {'dtype': dtype, 'device': device}
         assert config.n_embd % config.n_head == 0, "n_embd needs to be an integer multiple of n_heads."
@@ -132,7 +132,7 @@ class SwiGLU(mn.Module):
         def __init__(self, config: mn.Config, dtype = torch.float32, device = 'cpu'):
             super().__init__()
             self.kwargs = {'dtype': dtype, 'device': device}
-            # to be equivalent to C*4 from ffwd, we require 8/3*C as now there's 3 layers rather than 2, keeping params same.
+            # to be equivalent to C*4 from ffwd, we require 8/3*C as now there's 3 layers rather than 2, keeping Ps same.
             n_hidden = nearest_multiple(int(8 * config.n_embd / 3), divisor=256) # closest multiple of 256 to 8/3*C to make it a 'nice-number' 
             # (multiple works fine, Pow of 2 would require too big of a difference in size for not much in effeciency.)
             self.gate_value_proj = Linear(config.n_embd, n_hidden * 2, **self.kwargs)

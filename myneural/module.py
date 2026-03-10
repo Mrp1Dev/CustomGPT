@@ -1,18 +1,18 @@
-from typing import Any
-import torch
-from abc import abstractmethod, ABC
 from dataclasses import dataclass
+from typing import Any
+from abc import abstractmethod, ABC
+import torch
+
 @dataclass
 class Config:
-    n_embd = 192
-    n_head = 6
-    vocab_size = 65
-    n_layer = 6
-    total_batch_size = 65536 # MUST BE DIVISBLE by (B*T)
-    mini_batch_size = 64 # B
-    context_length = 256 # T
+    n_embd = 768
+    n_head = 12
+    n_layer = 16
+    mini_batch_size = 8 # B
+    context_length = 2048 # T
+    total_batch_size = 8*mini_batch_size*context_length # MUST BE DIVISBLE by (B*T)
     device = 'cuda'
-
+    vocab_size = 32768
 
 class Module(ABC):
     
@@ -85,17 +85,12 @@ class Module(ABC):
         for name, value in self.__dict__.items():
             handle_item(value, prefix+name)
     
-    # def register_buffer(self, key, buffer: torch.Tensor):
-    #     '''make sure to name key as the variable you are setting it to.'''
-    #     self.buffers[key] = buffer
-    #     return buffer
-    
     def to(self, device, dtype):
         def list_to(list):
             for i, item in enumerate(list):
                 if isinstance(item, torch.Tensor):
-                    was_param = attribute.requires_grad
-                    moved = attribute.to(device=device, dtype=dtype)
+                    was_param = item.requires_grad
+                    moved = item.to(device=device, dtype=dtype)
                     if was_param:
                         moved = Param(moved)
                     list[i] = moved
@@ -116,12 +111,7 @@ class Module(ABC):
                 setattr(self, key,attribute.to(device, dtype))
             if isinstance(attribute, list):
                 list_to(attribute)
-        # BUFFERS are no longer REQUIRED as all torch.tensors get moved.
-        # for key in self.buffers.keys():
-        #     new_buffer = self.buffers[key].to(device=device, dtype=dtype)
-        #     self.buffers[key] = new_buffer 
-        #     if hasattr(self, key):
-        #         setattr(self, key, new_buffer)
+        
         return self
         
     def __call__(self, x, **kwargs)->Any:
@@ -146,12 +136,5 @@ class Module(ABC):
             attribute = getattr(self, key)
             recursive_set_train(attribute)
     
-    
-# class Param(torch.Tensor):
-    
-#     def __new__(cls, data, **kwargs):
-#         if isinstance(data, torch.Tensor):
-#             data = data.detach()
-#         return torch.Tensor.as_subclass(data, cls, **kwargs).requires_grad_(True)
 def Param(tensor: torch.Tensor) -> torch.Tensor:
     return tensor.requires_grad_(True)

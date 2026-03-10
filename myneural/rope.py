@@ -13,15 +13,15 @@ def precompute_rotary_embeddings(head_size: int, context_length: int, theta: flo
     freqs = torch.outer(t, freqs)
     
     cos, sin = freqs.cos(), freqs.sin()
-    cos, sin = cos.bfloat16(), sin.bfloat16()
     cos, sin = cos[None,None,:,:], sin[None,None,:, :] # to be broadcasted later as (B_b, nh_b, T, hs//2)
     
     return cos, sin
 
 def apply_rope(x, cos, sin):
     assert x.ndim == 4 # must be (B, nh, T, hs)
-    half = x.shape[-1]//2
-    x1, x2 = x[..., :half], x[..., half:] # (B, nh, T, hs//2)
+    x_fp32 = x.float()
+    half = x_fp32.shape[-1]//2
+    x1, x2 = x_fp32[..., :half], x_fp32[..., half:] # (B, nh, T, hs//2)
     # for a pair (x1, x2), where it'll be like (x1, x33) incase of dim=64, after rotating the new coords (X, Y):
     # its that table i learned in JEE, 
     # X = x1*cost - x2*sint | [cos, -sin]
@@ -29,5 +29,6 @@ def apply_rope(x, cos, sin):
     y1 = x1 * cos - x2 * sin # Y
     y2 = x1 * (sin) + x2 * cos # X
     # # cat along the last dimension (hs//2)
-    return torch.cat([y1, y2], dim=3) # (B, nh, T, hs)
+    return torch.cat([y1, y2], dim=3).type_as(x) # (B, nh, T, hs)
+
 
